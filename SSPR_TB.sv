@@ -14,6 +14,8 @@ logic out_ready;
 logic [WIDTH-1:0] out_data;
 logic [WIDTH-1:0] in_data;
 
+
+//DUT
 SSPR #(.WIDTH(WIDTH)) DUT
 (
 .in_clk(clk),
@@ -26,11 +28,19 @@ SSPR #(.WIDTH(WIDTH)) DUT
 .out_data(out_data)
 );
 // generate clock
-always #10 clk <= ~clk;
+always #10 clk = ~clk;
 int k = 0;
+logic [WIDTH-1:0] expected_queue[$];
+int checked_transactions = 0;
+int sent = 0;
+
+
 initial begin
 
-//apply reset
+//Directed Test Cases
+
+//1. Apply Reset
+
 rst_n = 0;
 in_valid = 0;
 out_ready = 0;
@@ -40,10 +50,11 @@ if (!(in_ready && !out_valid && (out_data === 8'b0)))
     $error("Reset failed");
 else
     $display("Reset successful");
-#25
+#5
 rst_n = 1;
 #20
 
+//2. Basic transfer + backpressure
 in_data <= 8'hA5;
 in_valid <= 1; 
 
@@ -81,7 +92,7 @@ else
     $display("Transaction successful");
     
     
-// Simulataneous transfer
+// 3. Simulataneous transfer (consume + accept)
 
 in_data = 8'hA5;
 in_valid = 1; 
@@ -108,7 +119,7 @@ if (!(in_valid && in_ready))
 if (!(out_valid && out_ready))
     $error("Output transfer was not ready");
 
-    
+// A5 is consumed and A6 is accepted at this edge   
 @(posedge clk);
 @(negedge clk);  
  
@@ -119,7 +130,7 @@ if(out_data !== 8'hA6)
 else
     $display("Simultaneous transfer successful"); 
     
-    //empty buffer + simultaneous change, valid input and invalid output   
+//4. Empty buffer: input accepted while output is invalid
     
 rst_n = 0;
 #20
@@ -143,7 +154,7 @@ if(!out_valid)
 if(out_data !== 8'hA5)
     $error("Incorrect stored data, expected A5"); 
 
-// store in a full buffer
+// 5. Full buffer: attempted write under backpressure
 
 rst_n = 0;
 in_valid = 0;
@@ -172,7 +183,7 @@ if (out_data !== 8'hA5)
 if (in_ready)
     $error("in_ready should remain 0 while buffer is full and blocked");
 
-//read from an empty buffer
+ // 6. Read from an empty buffer
 rst_n = 0;
 in_valid = 0;
 out_ready = 0;
@@ -191,7 +202,7 @@ else
     $display("No data transfer occurred - test successful");
     
     
-//Continuous assignment
+// 7. Continuous traffic
 
 rst_n = 0;
 in_valid = 0;
@@ -200,7 +211,7 @@ in_data = 8'b0;
 #20
 rst_n = 1;
 #20
-// Continuous traffic
+
    
 out_ready = 1;
 in_valid = 1;
@@ -225,11 +236,92 @@ if (k !== 4)
     $error("Continuous traffic test failed: %0d/4 transfers correct", k);
 else
     $display("Continuous traffic test successful: A5 -> A6 -> A7 -> A8");
-    
-         
-    
-    
-    
-    
+   
+ // Randomized traffic with backpressure
+
+rst_n = 0;
+in_valid = 0;
+out_ready = 0;
+in_data = 8'b0;
+
+#20;
+rst_n = 1;
+
+in_valid = 1;
+in_data = 8'h10;
+
+
+
+while (sent < 20) begin
+
+    // Randomly apply backpressure
+    out_ready = $urandom_range(0, 1);
+
+    @(posedge clk);
+    @(negedge clk);
+
+    // Only advance to the next data value
+    // after the current transaction was accepted
+    if (in_valid && in_ready) begin
+        sent++;
+        in_data = 8'h10 + sent;
+    end
+
 end
+
+// Stop presenting new input
+in_valid = 0;
+
+// Allow remaining data to drain
+out_ready = 1;
+
+repeat (3) begin
+    @(posedge clk);
+    @(negedge clk);
+end
+
+if (expected_queue.size() != 0)
+    $error("Scoreboard test failed: %0d expected transactions remain",
+           expected_queue.size());
+else
+    $display("Scoreboard randomized test successful");
+end
+
+// Scoreboard
+always @(posedge clk) begin
+
+    if (!rst_n) begin
+        expected_queue.delete();
+        checked_transactions = 0;
+    end
+    else begin
+
+        // Input transaction: DUT accepted new data
+        if (in_valid && in_ready) begin
+            expected_queue.push_back(in_data);
+        end
+
+        // Output transaction: DUT produced data
+        if (out_valid && out_ready) begin
+
+            if (expected_queue.size() == 0) begin
+                $error("Output transaction occurred with no expected data");
+            end
+            else begin
+
+                if (out_data !== expected_queue[0]) begin
+                    $error("Scoreboard mismatch: expected %h, got %h",
+                           expected_queue[0], out_data);
+                end
+                else begin
+                    $display("Scoreboard match: %h", out_data);
+                    checked_transactions++;
+                end
+
+                expected_queue.pop_front();
+            end
+        end
+    end
+end
+
 endmodule
