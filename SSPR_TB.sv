@@ -55,8 +55,8 @@ rst_n = 1;
 #20
 
 //2. Basic transfer + backpressure
-in_data <= 8'hA5;
-in_valid <= 1; 
+in_data = 8'hA5;
+in_valid = 1; 
 
 @(posedge clk);
 @(negedge clk);
