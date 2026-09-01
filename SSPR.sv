@@ -13,7 +13,7 @@ output out_valid
 logic [WIDTH-1:0] data_reg;
 logic valid_reg;
 
-
+// One-entry valid/ready buffer
 always_ff @(posedge in_clk or negedge in_rst_n) begin
 
 if ( !in_rst_n) begin
@@ -24,7 +24,7 @@ end
 else begin
 
 // accept new data when data_reg is empty and input is valid
-// Accept and push data simultaneously
+// or Accept and push data simultaneously
 if(in_valid && (!valid_reg || out_ready)) begin
 data_reg <= in_data;
 valid_reg <= 1;
